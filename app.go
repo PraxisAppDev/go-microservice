@@ -38,5 +38,5 @@ func main() {
 	http.HandleFunc("/", handler)
 
 	// Start server
-	log.Fatal(http.ListenAndServe(":5000", nil))
+	log.Fatal(http.ListenAndServe(":8080", nil))
 }
