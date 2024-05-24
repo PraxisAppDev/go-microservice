@@ -4,6 +4,8 @@ on:
   push:
     branches:
       - main
+env:
+  AWS_REGION : "us-east-1"
 
 jobs:
   build:
@@ -51,3 +53,70 @@ jobs:
     env:
       DOCKER_CLI_EXPERIMENTAL: enabled
       DOCKER_BUILDKIT: 1
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write
+      contents: read
+  
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        
+      - name: configure aws credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: arn:aws:iam::489172774606:role/gh-actions-role
+          role-session-name: pythonrolesession
+          aws-region: ${{ env.AWS_REGION }}
+      - name: Check if launch template exists
+        id: check-lt
+        run: |
+          LAUNCH_TEMPLATE_NAME="go-microservice-lt"
+
+          #TODO: find graceful solution in the future
+          if aws ec2 describe-launch-templates --launch-template-names go-microservice-lt > lt.json 2>&1; then
+            if [ $(jq '.LaunchTemplates | length' lt.json) -eq 0 ]; then
+              echo "existslt=false" >> $GITHUB_ENV
+            else
+              echo "existslt=true" >> $GITHUB_ENV
+            fi
+          else
+            echo "existslt=false" >> $GITHUB_ENV
+          fi
+
+      - name: create launch template
+        if: env.existslt == 'false'
+        run: |
+          aws ec2 create-launch-template \
+            --launch-template-name go-microservice-lt \
+            --version-description go-microservice-for-Auto-Scaling-Version-1 \
+            --launch-template-data '{"NetworkInterfaces":[{"DeviceIndex":0,"AssociatePublicIpAddress":true,"Groups":["sg-0abe937fd14a5c9f8"],"DeleteOnTermination":true}],"ImageId":"ami-0bb84b8ffd87024d8","InstanceType":"t2.nano","KeyName":"proj_2-main-key","UserData":"IyEvYmluL2Jhc2gKc3VkbyB5dW0gdXBkYXRlIC15CnN1ZG8geXVtIGluc3RhbGwgLXkgZG9ja2VyCnN1ZG8gc2VydmljZSBkb2NrZXIgc3RhcnQKc3VkbyB1c2VybW9kIC1hIC1HIGRvY2tlciBlYzItdXNlcgpzdWRvIGRvY2tlciBwdWxsIGdoY3IuaW8vcHJheGlzYXBwZGV2L2dldC1jbGllbnQtaXAtZ286bGF0ZXN0CnN1ZG8gZG9ja2VyIHJ1biAtZCAtcCA1MDAwOjgwODAgZ2hjci5pby9wcmF4aXNhcHBkZXYvZ2V0LWNsaWVudC1pcC1nbzpsYXRlc3Q="}' --region us-east-1
+
+      - name: Get Latest Launch Template Version
+        id: get-lt-version
+        if: env.existslt == 'true'
+        run: |
+          LAUNCH_TEMPLATE_NAME="go-microservice-lt"
+          echo "LAUNCH_TEMPLATE_NAME=$LAUNCH_TEMPLATE_NAME" >> $GITHUB_ENV
+          LATEST_VERSION=$(aws ec2 describe-launch-templates --launch-template-names $LAUNCH_TEMPLATE_NAME --query 'LaunchTemplates[0].LatestVersionNumber' --output text)
+          echo "LATEST_VERSION=$LATEST_VERSION" >> $GITHUB_ENV
+        shell: bash
+
+      - name: Increment Latest Version
+        if: env.existslt == 'true'
+        run: |
+          NEW_VERSION=$((LATEST_VERSION + 1))
+          echo "NEW_VERSION=$NEW_VERSION" >> $GITHUB_ENV
+        shell: bash
+
+      - name: Update launch template
+        if: env.existslt == 'true'
+        run: |
+          aws ec2 create-launch-template-version \
+            --launch-template-name go-microservice-lt \
+            --version-description go-microservice-for-Auto-Scaling-Version-${{ env.NEW_VERSION }} \
+            --source-version 1 \
+            --launch-template-data '{"NetworkInterfaces":[{"DeviceIndex":0,"AssociatePublicIpAddress":true,"Groups":["sg-0abe937fd14a5c9f8"],"DeleteOnTermination":true}],"ImageId":"ami-0bb84b8ffd87024d8","InstanceType":"t2.nano","KeyName":"proj_2-main-key","UserData":"IyEvYmluL2Jhc2gKc3VkbyB5dW0gdXBkYXRlIC15CnN1ZG8geXVtIGluc3RhbGwgLXkgZG9ja2VyCnN1ZG8gc2VydmljZSBkb2NrZXIgc3RhcnQKc3VkbyB1c2VybW9kIC1hIC1HIGRvY2tlciBlYzItdXNlcgpzdWRvIGRvY2tlciBwdWxsIGdoY3IuaW8vcHJheGlzYXBwZGV2L2dldC1jbGllbnQtaXAtZ286bGF0ZXN0CnN1ZG8gZG9ja2VyIHJ1biAtZCAtcCA1MDAwOjgwODAgZ2hjci5pby9wcmF4aXNhcHBkZXYvZ2V0LWNsaWVudC1pcC1nbzpsYXRlc3Q="}' --region us-east-1
