@@ -188,7 +188,7 @@ jobs:
           AUTO_SCALING_GROUP_NAME="go-microservice-asg"
           
           # Start a new instance refresh
-          aws autoscaling start-instance-refresh 
+          aws autoscaling start-instance-refresh \
               --auto-scaling-group-name $AUTO_SCALING_GROUP_NAME \
               --preferences '{"MinHealthyPercentage": 90, "InstanceWarmup": 300}'
         shell: bash
